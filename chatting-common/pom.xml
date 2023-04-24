@@ -9,5 +9,13 @@
         <version>dev-SNAPSHOT</version>
     </parent>
 
+    <dependencies>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.10.1</version>
+        </dependency>
+    </dependencies>
+
     <artifactId>chatting-common</artifactId>
 </project>
