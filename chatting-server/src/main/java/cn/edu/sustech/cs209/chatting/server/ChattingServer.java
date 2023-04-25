@@ -182,7 +182,7 @@ public class ChattingServer {
                         if (sender.compareTo(receiver) < 0) {
                             key = sender + "_" + receiver;
                         } else {
-                            key = sender + "_" + receiver;
+                            key = receiver + "_" + sender;
                         }
                         if (!privateMessageHistory.containsKey(key)) {
                             privateMessageHistory.put(key, new ArrayList<>());
@@ -201,7 +201,7 @@ public class ChattingServer {
                         if (sender.compareTo(receiver) < 0) {
                             key = sender + "_" + receiver;
                         } else {
-                            key = sender + "_" + receiver;
+                            key = receiver + "_" + sender;
                         }
                         if (!privateMessageHistory.containsKey(key)) {
                             privateMessageHistory.put(key, new ArrayList<>());
@@ -238,6 +238,7 @@ public class ChattingServer {
             String receiver = message.getSendTo();
             Message resMsgToSender = buildMessage(sender, Message.RE_PRIVATE_CHAT, joinedString);
             this.sendMessage(resMsgToSender);
+//            System.out.println("Sender - "+ sender + " Receiver - " + receiver +  " Key - " + key);
             for (ClientThread cthrd: clients) {
                 if(cthrd.getUsername().equals(receiver)){
                     Message resMsgToReceiver = buildMessage(receiver, Message.RE_PRIVATE_CHAT, joinedString);

@@ -33,29 +33,22 @@ public class Controller implements Initializable {
     public TextArea inputArea;
     //
     public Label currentChatTitle;
+    // 当前聊天窗对方名称 在请求建立对话中会发给服务器
+    private String chatTitle;
+
     // 对话中显示自己的名字 左下角
     public Label currentUsername;
     // 当前在线人数 右下角
     public Label currentOnlineCnt;
 
-
-
-
     // 输入输出流
     private BufferedReader in;
     private PrintWriter out;
-
-
-
 
     // 当前用户用户名
     String username;
     // 当前是否为群聊
     private boolean isGroup;
-
-    // 当前聊天窗对方名称 在请求建立对话中会发给服务器
-    private String chatTitle;
-
 
     // 当前在线用户
     private List<String> curClients = new ArrayList<>();
@@ -139,7 +132,6 @@ public class Controller implements Initializable {
             System.out.println("Invalid username " + input + ", exiting");
             Platform.exit();
         }
-        chatContentList.setCellFactory(new MessageCellFactory());
     }
 
     // 弹出提示框提示用户
@@ -160,12 +152,6 @@ public class Controller implements Initializable {
     private void launchPrivateChat(String title){
         Message createPrivateChatMsg = buildMessage(chatTitle, Message.LAUNCH_PRIVATE_CHAT, title);
         sendOutMessage(createPrivateChatMsg);
-    }
-
-    // 向服务器说明自己要发起聊天 请求得到群聊聊天记录
-    private void launchGroupChat(String usersAndTitle){
-        Message createGroupChatMsg = buildMessage(chatTitle, Message.LAUNCH_GROUP_CHAT, usersAndTitle);
-        sendOutMessage(createGroupChatMsg);
     }
 
 
@@ -206,25 +192,36 @@ public class Controller implements Initializable {
             this.currentChatTitle.setText(userSelected);
             this.isGroup = false;
             boolean chatRoomExists = false;
-            for (ChatRoom item : chatList.getItems()) {
-                if (item != null && item.getTitle().equals(userSelected)) {
+            for (ChatRoom room : chatList.getItems()) {
+                System.out.println(userSelected);
+                if (room != null && room.getTitle().equals(userSelected)) {
                     chatRoomExists = true;
                     break;
                 }
             }
+            // 第一次创建时执行if
             if (!chatRoomExists) {
                 ChatRoom newChatRoom = new ChatRoom(userSelected);
                 newChatRoom.setOnMouseClicked(event -> {
                     System.out.println("Click ChatRoom");
                     Controller.this.isGroup = false;
                     Controller.this.chatTitle = newChatRoom.getTitle();
+                    Controller.this.currentChatTitle.setText(userSelected);
+                    System.out.println(chatTitle);
                     launchPrivateChat(Controller.this.chatTitle);
                 });
                 this.chatList.getItems().add(newChatRoom);
             }
             launchPrivateChat(this.chatTitle);
-            System.out.println("Stop Here");
         }
+    }
+
+
+
+    // 向服务器说明自己要发起聊天 请求得到群聊聊天记录
+    private void launchGroupChat(String usersAndTitle){
+        Message createGroupChatMsg = buildMessage(chatTitle, Message.LAUNCH_GROUP_CHAT, usersAndTitle);
+        sendOutMessage(createGroupChatMsg);
     }
 
     /**
@@ -318,7 +315,8 @@ public class Controller implements Initializable {
                     // 用户收到同意下线 就直接下线
                     if(messageType.equals(Message.SERVER_AGREE_GO_OFFLINE)){
                         break;
-                    }else if(messageType.equals(Message.UPDATE_LIST)){
+                    }
+                    else if(messageType.equals(Message.UPDATE_LIST)){
                         // 用户列表算出人数显示在界面
                         System.out.println("Refresh List Here");
                         List<String> usernames = new ArrayList<>(Arrays.asList(messageData.substring(1, messageData.length() - 1).split(", ")));
@@ -335,7 +333,13 @@ public class Controller implements Initializable {
                     // 发起私聊的服务器响应 主要返回聊天记录
                     else if(Objects.equals(messageType, Message.RE_PRIVATE_CHAT)){
                         // 接收到数据处理回Message List
-                        List<Message> msgList = Arrays.stream(messageData.split("@_@")).map(Message::fromJson).collect(Collectors.toList());
+                        ArrayList<Message> msgList = new ArrayList<>();
+                        if(!messageData.isEmpty()){
+                            for (String msgStr : messageData.split("@_@")) {
+                                Message message = Message.fromJson(msgStr);
+                                msgList.add(message);
+                            }
+                        }
                         if (!isGroup) {
                             String curKey;
                             if (Controller.this.username.compareTo(Controller.this.chatTitle) < 0) {
@@ -344,25 +348,26 @@ public class Controller implements Initializable {
                                 curKey = Controller.this.chatTitle + "_" + Controller.this.username;
                             }
                             String returnKey;
-                            if (received_message.getSentBy().compareTo(received_message.getSendTo()) < 0) {
-                                returnKey = received_message.getSentBy() + "_" + received_message.getSendTo();
-                            } else {
-                                returnKey = received_message.getSendTo() + "_" + received_message.getSentBy();
+                            if (msgList.size() > 0){
+                                if (msgList.get(0).getSentBy().compareTo(msgList.get(0).getSendTo()) < 0) {
+                                    returnKey = msgList.get(0).getSentBy() + "_" + msgList.get(0).getSendTo();
+                                } else {
+                                    returnKey = msgList.get(0).getSendTo() + "_" + msgList.get(0).getSentBy();
+                                }
+                                if(returnKey.equals(curKey)){
+                                    Platform.runLater(() -> {
+                                        Controller.this.chatContentList.getItems().clear();
+                                        Controller.this.chatContentList.getItems().addAll(msgList);
+                                    });
+                                }
                             }
-                            if (msgList.size() > 0 && curKey.equals(returnKey)){
-                                Platform.runLater(() -> {
-                                    Controller.this.chatContentList.getItems().clear();
-                                    Controller.this.chatContentList.getItems().addAll(msgList);
-                                });
-                            }
-                            else if (msgList.size() == 0) {
+                            else {
                                 Controller.this.chatContentList.getItems().clear();
                             }
                         }
                     }
                     // 发起群聊的服务器响应 主要返回聊天记录
                     else if(Objects.equals(messageType, Message.RE_GROUP_CHAT)){
-
                     }
                 }
                 in.close();
