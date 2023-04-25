@@ -74,58 +74,57 @@ public class Controller implements Initializable {
     Optional<String> input = dialog.showAndWait();
     // 得到合法用户名后 以该用户名为身份进入应用
     if (input.isPresent() && !input.get().isEmpty()) {
-        username = input.get();
-        this.currentUsername.setText(String.format("Current User: %s", this.username));
-//        this.inputArea.setWrapText(true);
-        this.chatTitle = "";
-        try {
-            // 创建socket
-            Socket clientSocket = new Socket("localhost", 9328);
-            // 初始化输入输出流
-            in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8));
-            out = new PrintWriter(new OutputStreamWriter(clientSocket.getOutputStream(), StandardCharsets.UTF_8), true);
-            // 通知服务器 请求上线 同时包含了自己的用户名
-            Message goOnlineMsg = buildMessage("Server", Message.CLIENT_GO_ONLINE, username);
-            sendOutMessage(goOnlineMsg);
-            // 监听等待回复
-            boolean joinAdmitted = false;
-            String received;
-            while ((received = in.readLine()) != null) {
-                Message received_message = Message.fromJson(received);
-                String messageType = received_message.getType();
-                String messageData = received_message.getData();
-                // server允许用户上线
-                if(Objects.equals(messageType, Message.JOIN_SUCCESS)){
-                    joinAdmitted = true;
-                    break;
-                }
-                // server拒绝用户上线
-                else if(Objects.equals(messageType, Message.JOIN_FAILURE)){
-                    if(Objects.equals(messageData, Message.DUPLICATE_USERNAME)){
-                        popOutAlert("Join Failure", "Duplicate username");
-                        System.out.println("Duplicate username " + input + ", exiting");
-                    }else if(Objects.equals(messageData, Message.USERNAME_EQUALS_TO_SERVER)){
-                        popOutAlert("Join Failure", "Username cannot be 'Server'");
-                        System.out.println("Invalid username " + input + ", exiting");
-                    }
-                    in.close();
-                    out.close();
-                    clientSocket.close();
-                    Platform.exit();
-                    break;
-                }
+      username = input.get();
+      this.currentUsername.setText(String.format("Current User: %s", this.username));
+      this.chatTitle = "";
+      try {
+        // 创建socket
+        Socket clientSocket = new Socket("localhost", 9328);
+        // 初始化输入输出流
+        in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8));
+        out = new PrintWriter(new OutputStreamWriter(clientSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+        // 通知服务器 请求上线 同时包含了自己的用户名
+        Message goOnlineMsg = buildMessage("Server", Message.CLIENT_GO_ONLINE, username);
+        sendOutMessage(goOnlineMsg);
+        // 监听等待回复
+        boolean joinAdmitted = false;
+        String received;
+        while ((received = in.readLine()) != null) {
+          Message received_message = Message.fromJson(received);
+          String messageType = received_message.getType();
+          String messageData = received_message.getData();
+          // server允许用户上线
+          if (Objects.equals(messageType, Message.JOIN_SUCCESS)) {
+            joinAdmitted = true;
+            break;
+          }
+          // server拒绝用户上线
+          else if (Objects.equals(messageType, Message.JOIN_FAILURE)) {
+            if(Objects.equals(messageData, Message.DUPLICATE_USERNAME)){
+              popOutAlert("Join Failure", "Duplicate username");
+              System.out.println("Duplicate username " + input + ", exiting");
+            } else if (Objects.equals(messageData, Message.USERNAME_EQUALS_TO_SERVER)) {
+              popOutAlert("Join Failure", "Username cannot be 'Server'");
+              System.out.println("Invalid username " + input + ", exiting");
             }
-            if(joinAdmitted){
-                new Thread(new Controller.ClientMessageThread(clientSocket)).start();
-                chatContentList.setCellFactory(new MessageCellFactory());
-            }
-        } catch (IOException ex) {
-            ex.printStackTrace();
+            in.close();
+            out.close();
+            clientSocket.close();
+            Platform.exit();
+            break;
+          }
         }
+        if (joinAdmitted) {
+          new Thread(new Controller.ClientMessageThread(clientSocket)).start();
+          chatContentList.setCellFactory(new MessageCellFactory());
+        }
+      } catch (IOException ex) {
+        ex.printStackTrace();
+      }
     } else {
-        popOutAlert("Join Failure", "Invalid Username.");
-        System.out.println("Invalid username " + input + ", exiting");
-        Platform.exit();
+      popOutAlert("Join Failure", "Invalid Username.");
+      System.out.println("Invalid username " + input + ", exiting");
+      Platform.exit();
     }
   }
 
@@ -473,7 +472,6 @@ public class Controller implements Initializable {
         Platform.exit();
       } catch (SocketException e) {
         System.out.println("Disconnected from the server.");
-        popOutAlert("Disconnected", "Disconnected from the server.");
       } catch (IOException e) {
         e.printStackTrace();
       } finally {
