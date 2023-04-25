@@ -8,71 +8,223 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.control.Label;
 import javafx.scene.layout.HBox;
 import javafx.stage.Stage;
 import javafx.util.Callback;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.net.Socket;
 import java.net.URL;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.ResourceBundle;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 public class Controller implements Initializable {
 
     @FXML
     ListView<Message> chatContentList;
+    // 记录已经存在的聊天列表
+    public ListView<ChatRoom> chatList;
 
+    public TextArea inputArea;
+    //
+    public Label currentChatTitle;
+    // 对话中显示自己的名字 左下角
+    public Label currentUsername;
+    // 当前在线人数 右下角
+    public Label currentOnlineCnt;
+
+
+
+
+    // 输入输出流
+    private BufferedReader in;
+    private PrintWriter out;
+
+
+
+
+    // 当前用户用户名
     String username;
+    // 当前是否为群聊
+    private boolean isGroup;
+
+    // 当前聊天窗对方名称 在请求建立对话中会发给服务器
+    private String chatTitle;
+
+
+    // 当前在线用户
+    private List<String> curClients = new ArrayList<>();
+
+    // 更新当前在线用户
+    public List<String> getCurClients() {
+        return curClients;
+    }
+
+    // 返回当前在线用户
+    public void setCurClients(List<String> newCurClients) {
+        curClients = newCurClients;
+    }
+
 
     @Override
     public void initialize(URL url, ResourceBundle resourceBundle) {
-
+        // 初始弹出输入框 定义用户名
         Dialog<String> dialog = new TextInputDialog();
         dialog.setTitle("Login");
         dialog.setHeaderText(null);
         dialog.setContentText("Username:");
 
         Optional<String> input = dialog.showAndWait();
+        // 得到合法用户名后 以该用户名为身份进入应用
         if (input.isPresent() && !input.get().isEmpty()) {
-            /*
+             /*
                TODO: Check if there is a user with the same name among the currently logged-in users,
                      if so, ask the user to change the username
              */
             username = input.get();
+            this.currentUsername.setText(String.format("Current User: %s", this.username));
+//            this.inputArea.setWrapText(true);
+            this.chatTitle = "";
+            try {
+                // 创建socket
+                Socket clientSocket = new Socket("localhost", 9328);
+                // 初始化输入输出流
+                in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                out = new PrintWriter(clientSocket.getOutputStream(), true);
+                // 通知服务器 请求上线 同时包含了自己的用户名
+                Message goOnlineMsg = buildMessage("Server", Message.CLIENT_GO_ONLINE, username);
+                sendOutMessage(goOnlineMsg);
+                // 监听等待回复
+                boolean joinSuccessful = false;
+                String received;
+                while ((received = in.readLine()) != null) {
+                    Message received_message = Message.fromJson(received);
+                    String messageType = received_message.getType();
+                    String messageData = received_message.getData();
+                    // server允许用户上线
+                    if(Objects.equals(messageType, Message.JOIN_SUCCESS)){
+                        joinSuccessful = true;
+                        break;
+                    }
+                    // server拒绝用户上线
+                    else if(Objects.equals(messageType, Message.JOIN_FAILURE)){
+                        if(Objects.equals(messageData, Message.DUPLICATE_USERNAME)){
+                            popOutAlert("Join Failure", "Duplicate username");
+                            System.out.println("Duplicate username " + input + ", exiting");
+                        }else if(Objects.equals(messageData, Message.USERNAME_EQUALS_TO_SERVER)){
+                            popOutAlert("Join Failure", "Username cannot be 'Server'");
+                            System.out.println("Invalid username " + input + ", exiting");
+                        }
+                        in.close();
+                        out.close();
+                        clientSocket.close();
+                        Platform.exit();
+                        break;
+                    }
+                }
+                if(joinSuccessful){
+                    new Thread(new Controller.ClientMessageThread(clientSocket)).start();
+                    chatContentList.setCellFactory(new MessageCellFactory());
+                }
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
         } else {
+            popOutAlert("Join Failure", "Invalid Username.");
             System.out.println("Invalid username " + input + ", exiting");
             Platform.exit();
         }
-
         chatContentList.setCellFactory(new MessageCellFactory());
     }
 
+    // 弹出提示框提示用户
+    public static void popOutAlert(String title, String content) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        alert.setContentText(content);
+        alert.showAndWait();
+    }
+
+
+
+    // TODO showGroupChatConfigDialog
+
+
+    // 向服务器说明自己要发起聊天 请求得到私聊聊天记录
+    private void launchPrivateChat(String title){
+        Message createPrivateChatMsg = buildMessage(chatTitle, Message.LAUNCH_PRIVATE_CHAT, title);
+        sendOutMessage(createPrivateChatMsg);
+    }
+
+    // 向服务器说明自己要发起聊天 请求得到群聊聊天记录
+    private void launchGroupChat(String usersAndTitle){
+        Message createGroupChatMsg = buildMessage(chatTitle, Message.LAUNCH_GROUP_CHAT, usersAndTitle);
+        sendOutMessage(createGroupChatMsg);
+    }
+
+
+    // TODO
     @FXML
     public void createPrivateChat() {
         AtomicReference<String> user = new AtomicReference<>();
-
+        // 设置窗口
         Stage stage = new Stage();
-        ComboBox<String> userSel = new ComboBox<>();
-
-        // FIXME: get the user list from server, the current user's name should be filtered out
-        userSel.getItems().addAll("Item 1", "Item 2", "Item 3");
-
-        Button okBtn = new Button("OK");
-        okBtn.setOnAction(e -> {
-            user.set(userSel.getSelectionModel().getSelectedItem());
+        stage.setTitle("Select a user for private chat");
+        stage.setWidth(400.0);
+        stage.setHeight(200.0);
+        // 设置下拉栏
+        Label userSelLabel = new Label("Select a user:");
+        ComboBox<String> selBox = new ComboBox<>();
+        selBox.setPrefWidth(200.0);
+        Button confirmBtn = new Button("OK");
+        synchronized (this) {
+            selBox.getItems().addAll(getCurClients());
+        }
+        // 设置按钮事件
+        confirmBtn.setOnAction(e -> {
+            user.set(selBox.getSelectionModel().getSelectedItem());
             stage.close();
         });
-
-        HBox box = new HBox(10);
+        // 显示组件
+        HBox box = new HBox(12);
+        box.setPadding(new Insets(20, 12, 20, 12));
         box.setAlignment(Pos.CENTER);
-        box.setPadding(new Insets(20, 20, 20, 20));
-        box.getChildren().addAll(userSel, okBtn);
+        box.getChildren().addAll(userSelLabel, selBox, confirmBtn);
         stage.setScene(new Scene(box));
         stage.showAndWait();
 
-        // TODO: if the current user already chatted with the selected user, just open the chat with that user
-        // TODO: otherwise, create a new chat item in the left panel, the title should be the selected user's name
+        // 获取选中用户的用户名
+        String userSelected = user.get();
+        if(userSelected != null && !userSelected.equals("")){
+            this.chatTitle = userSelected;
+            this.currentChatTitle.setText(userSelected);
+            this.isGroup = false;
+            boolean chatRoomExists = false;
+            for (ChatRoom item : chatList.getItems()) {
+                if (item != null && item.getTitle().equals(userSelected)) {
+                    chatRoomExists = true;
+                    break;
+                }
+            }
+            if (!chatRoomExists) {
+                ChatRoom newChatRoom = new ChatRoom(userSelected);
+                newChatRoom.setOnMouseClicked(event -> {
+                    System.out.println("Click ChatRoom");
+                    Controller.this.isGroup = false;
+                    Controller.this.chatTitle = newChatRoom.getTitle();
+                    launchPrivateChat(Controller.this.chatTitle);
+                });
+                this.chatList.getItems().add(newChatRoom);
+            }
+            launchPrivateChat(this.chatTitle);
+            System.out.println("Stop Here");
+        }
     }
 
     /**
@@ -85,9 +237,15 @@ public class Controller implements Initializable {
      * If there are <= 3 users: do not display the ellipsis, for example:
      * UserA, UserB (2)
      */
+
+    // TODO
     @FXML
     public void createGroupChat() {
     }
+
+    //    TODO
+    //    private String showGroupChatConfigDialog()
+
 
     /**
      * Sends the message to the <b>currently selected</b> chat.
@@ -95,10 +253,127 @@ public class Controller implements Initializable {
      * Blank messages are not allowed.
      * After sending the message, you should clear the text input field.
      */
+
+
+    // TODO
     @FXML
     public void doSendMessage() {
-        // TODO
+        String textContent = inputArea.getText();
+        if(textContent.length()>0){
+            if(!textContent.replaceAll("(?!\\r)\\n", "").equals("")){
+                textContent = textContent.replaceAll("(?!\\r)\\n", Message.NEW_LINE);
+                inputArea.setText("");
+                String messageType = "";
+                if(isGroup){
+                    messageType = Message.SEND_GROUP_MESSAGE;
+                }else{
+                    messageType = Message.SEND_PRIVATE_MESSAGE;
+                }
+                // 把对话框里的对话消息发给服务器
+                Message contentMsg = buildMessage(this.chatTitle, messageType, textContent);
+                sendOutMessage(contentMsg);
+            }
+        }
+        else{
+            popOutAlert("Warning", "Blank messages are not allowed.");
+        }
     }
+
+
+
+    // shutdown让当前client向服务器发送消息告知自己下线
+    public void shutdown() {
+        Message goOfflineMsg = buildMessage("Server", Message.CLIENT_GO_OFFLINE, Message.CLIENT_GO_OFFLINE);
+        sendOutMessage(goOfflineMsg);
+    }
+
+    // 发送socket层面的消息
+    public void sendOutMessage(Message message){
+        out.println(message.toJson());
+    }
+
+    private Message buildMessage(String target, String type, String data) {
+        return new Message(System.currentTimeMillis(), this.username, target, type, data);
+    }
+
+    // 待修改
+    private class ClientMessageThread implements Runnable {
+        private final Socket clientSocket;
+
+        public ClientMessageThread(Socket clientSocket) {
+            this.clientSocket = clientSocket;
+        }
+
+        public void run() {
+            try {
+                BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true);
+
+                String received;
+                while ((received = in.readLine()) != null) {
+                    Message received_message = Message.fromJson(received);
+                    System.out.println(received_message.toString());
+                    String messageType = received_message.getType();
+                    String messageData = received_message.getData();
+                    // 用户收到同意下线 就直接下线
+                    if(messageType.equals(Message.SERVER_AGREE_GO_OFFLINE)){
+                        break;
+                    }else if(messageType.equals(Message.UPDATE_LIST)){
+                        // 用户列表算出人数显示在界面
+                        System.out.println("Refresh List Here");
+                        List<String> usernames = new ArrayList<>(Arrays.asList(messageData.substring(1, messageData.length() - 1).split(", ")));
+                        int cnt_user = usernames.size();
+                        Platform.runLater(() -> {
+                            Controller.this.currentOnlineCnt.setText("Online: " + cnt_user);
+                        });
+                        usernames.remove(username);
+                        // 用户列表去掉自己的名字
+                        synchronized (Controller.this) {
+                            setCurClients(usernames);
+                        }
+                    }
+                    // 发起私聊的服务器响应 主要返回聊天记录
+                    else if(Objects.equals(messageType, Message.RE_PRIVATE_CHAT)){
+                        // 接收到数据处理回Message List
+                        List<Message> msgList = Arrays.stream(messageData.split("@_@")).map(Message::fromJson).collect(Collectors.toList());
+                        if (!isGroup) {
+                            String curKey;
+                            if (Controller.this.username.compareTo(Controller.this.chatTitle) < 0) {
+                                curKey = Controller.this.username + "_" + Controller.this.chatTitle;
+                            } else {
+                                curKey = Controller.this.chatTitle + "_" + Controller.this.username;
+                            }
+                            String returnKey;
+                            if (received_message.getSentBy().compareTo(received_message.getSendTo()) < 0) {
+                                returnKey = received_message.getSentBy() + "_" + received_message.getSendTo();
+                            } else {
+                                returnKey = received_message.getSendTo() + "_" + received_message.getSentBy();
+                            }
+                            if (msgList.size() > 0 && curKey.equals(returnKey)){
+                                Platform.runLater(() -> {
+                                    Controller.this.chatContentList.getItems().clear();
+                                    Controller.this.chatContentList.getItems().addAll(msgList);
+                                });
+                            }
+                            else if (msgList.size() == 0) {
+                                Controller.this.chatContentList.getItems().clear();
+                            }
+                        }
+                    }
+                    // 发起群聊的服务器响应 主要返回聊天记录
+                    else if(Objects.equals(messageType, Message.RE_GROUP_CHAT)){
+
+                    }
+                }
+                in.close();
+                System.out.println("ClientMessageThread closed.");
+                Platform.exit();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
 
     /**
      * You may change the cell factory if you changed the design of {@code Message} model.
@@ -117,7 +392,7 @@ public class Controller implements Initializable {
                         setGraphic(null);
                         return;
                     }
-
+                    //
                     HBox wrapper = new HBox();
                     Label nameLabel = new Label(msg.getSentBy());
                     Label msgLabel = new Label(msg.getData());
@@ -135,6 +410,7 @@ public class Controller implements Initializable {
                         wrapper.getChildren().addAll(nameLabel, msgLabel);
                         msgLabel.setPadding(new Insets(0, 0, 0, 20));
                     }
+                    //
 
                     setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
                     setGraphic(wrapper);
@@ -142,4 +418,5 @@ public class Controller implements Initializable {
             };
         }
     }
+
 }
